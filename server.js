@@ -8,9 +8,19 @@ import Anthropic from '@anthropic-ai/sdk';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Configure CORS explicitly — allow any origin, all methods, all headers
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: false,
+}));
+
+// Handle preflight requests for all routes
+app.options('*', cors());
+
 // Allow large image uploads (up to 10MB)
 app.use(express.json({ limit: '10mb' }));
-app.use(cors()); // Allow requests from your frontend
 
 // Initialize Claude client (API key comes from environment variable)
 const anthropic = new Anthropic({
@@ -35,7 +45,7 @@ app.post('/analyze-eye', async (req, res) => {
 
     // Call Claude API
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: 'claude-sonnet-4-20250514',
       max_tokens: 1024,
       messages: [{
         role: 'user',
