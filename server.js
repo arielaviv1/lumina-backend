@@ -61,10 +61,14 @@ app.post('/analyze-eye', async (req, res) => {
           {
             type: 'text',
             text: `You are a visual screening assistant. Analyze this eye image and assess visible signs of:
-1. Anemia indicators (pale conjunctiva)
-2. Jaundice indicators (yellow sclera)
-3. Vessel patterns / hypertension signs
-4. Surface irritation / infection (redness, inflammation)
+1. Anemia (pale conjunctiva)
+2. Jaundice (yellow sclera)
+3. Hypertension (vessel patterns, redness)
+4. Conjunctivitis (redness, inflammation, discharge)
+5. Dry eye (irritation, tear film irregularities, redness)
+6. Fatigue (under-eye darkness, puffiness, tired appearance)
+7. Allergies (watery, itchy-looking, swollen lids)
+8. Arcus senilis (grayish-white ring around iris — cholesterol marker)
 
 Respond with ONLY a valid JSON object in this exact format (no markdown, no extra text):
 {
@@ -74,6 +78,10 @@ Respond with ONLY a valid JSON object in this exact format (no markdown, no extr
   "jaundice": {"risk": "low", "confidence": 85, "finding": "observation"},
   "hypertension": {"risk": "low", "confidence": 75, "finding": "observation"},
   "infection": {"risk": "low", "confidence": 90, "finding": "observation"},
+  "dryeye": {"risk": "low", "confidence": 80, "finding": "observation"},
+  "fatigue": {"risk": "low", "confidence": 75, "finding": "observation"},
+  "allergies": {"risk": "low", "confidence": 80, "finding": "observation"},
+  "arcus": {"risk": "low", "confidence": 85, "finding": "observation"},
   "overall": "summary in one sentence"
 }
 
