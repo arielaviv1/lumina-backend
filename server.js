@@ -1,5 +1,5 @@
-// server.js — Eye Health Analyzer backend
-// Receives eye images from your app, sends to Claude API, returns analysis
+// server.js — Lumina backend
+// Receives eye images + vitals, sends to Claude API, returns analysis
 
 import express from 'express';
 import cors from 'cors';
@@ -22,17 +22,17 @@ app.options('*', cors());
 // Allow large image uploads (up to 10MB)
 app.use(express.json({ limit: '10mb' }));
 
-// Initialize Claude client (API key comes from environment variable)
+// Initialize Claude client
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
 // Health check endpoint
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'Eye Health Analyzer API is running' });
+  res.json({ status: 'ok', message: 'Lumina API is running' });
 });
 
-// Main analysis endpoint
+// ========== ENDPOINT 1: Analyze eye image ==========
 app.post('/analyze-eye', async (req, res) => {
   try {
     const { image, mediaType } = req.body;
@@ -43,7 +43,6 @@ app.post('/analyze-eye', async (req, res) => {
 
     console.log(`Received image: ${mediaType}, ${Math.round(image.length / 1024)}KB base64`);
 
-    // Call Claude API
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-5',
       max_tokens: 1024,
@@ -91,7 +90,6 @@ Use "low", "medium", or "high" for risk. If not an eye image, set is_eye_image t
       }],
     });
 
-    // Extract text from response
     const text = response.content
       .filter(block => block.type === 'text')
       .map(block => block.text)
@@ -100,12 +98,10 @@ Use "low", "medium", or "high" for risk. If not an eye image, set is_eye_image t
 
     console.log(`Claude responded: ${text.slice(0, 100)}...`);
 
-    // Parse JSON response (with fallbacks for extra text)
     let parsed;
     try {
       parsed = JSON.parse(text);
     } catch {
-      // Try to find JSON inside the response
       const start = text.indexOf('{');
       const end = text.lastIndexOf('}');
       if (start !== -1 && end > start) {
@@ -126,7 +122,100 @@ Use "low", "medium", or "high" for risk. If not an eye image, set is_eye_image t
   }
 });
 
+// ========== ENDPOINT 2: Synthesize eye + heart rate results ==========
+app.post('/synthesize', async (req, res) => {
+  try {
+    const { eyeResults, heartRate } = req.body;
+
+    if (!eyeResults || typeof heartRate !== 'number') {
+      return res.status(400).json({ error: 'Need both eyeResults and heartRate' });
+    }
+
+    console.log(`Synthesizing: HR=${heartRate}, findings=${Object.keys(eyeResults).length}`);
+
+    // Build a compact summary of the eye findings
+    const indicators = ['anemia', 'jaundice', 'hypertension', 'infection',
+                        'dryeye', 'fatigue', 'allergies', 'arcus'];
+    const eyeFindings = indicators
+      .filter(k => eyeResults[k])
+      .map(k => `- ${k}: risk=${eyeResults[k].risk}, confidence=${eyeResults[k].confidence}%, finding="${eyeResults[k].finding}"`)
+      .join('\n');
+
+    // Classify heart rate
+    let hrZone = 'normal range (60-100 BPM)';
+    if (heartRate < 60) hrZone = 'low (bradycardia, <60 BPM)';
+    else if (heartRate > 100) hrZone = 'elevated (tachycardia, >100 BPM)';
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 512,
+      messages: [{
+        role: 'user',
+        content: [{
+          type: 'text',
+          text: `You are a wellness screening assistant. A user just completed a Lumina screening with two parts:
+
+EYE SCAN FINDINGS:
+${eyeFindings}
+
+Eye summary: "${eyeResults.overall}"
+
+HEART RATE MEASUREMENT:
+- Measured: ${heartRate} BPM
+- Zone: ${hrZone}
+
+TASK: Write a single combined wellness insight (2-3 sentences) that:
+1. Synthesizes both the visual eye findings AND the heart rate together
+2. Notes any patterns where vitals reinforce or contradict eye signals (e.g., elevated HR + visible hypertension signs = stronger signal)
+3. Suggests ONE most useful next step if appropriate (rest, hydration, see a doctor, etc.)
+4. Stays warm, calm, non-alarming. Wellness-framed, not diagnostic.
+
+Respond with ONLY a valid JSON object (no markdown):
+{
+  "synthesis": "your 2-3 sentence combined insight",
+  "next_step": "one short suggested next step, or empty string if everything looks fine",
+  "overall_risk": "low"
+}
+
+Use "low", "medium", or "high" for overall_risk.`,
+        }],
+      }],
+    });
+
+    const text = response.content
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('')
+      .trim();
+
+    console.log(`Synthesis: ${text.slice(0, 100)}...`);
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      const start = text.indexOf('{');
+      const end = text.lastIndexOf('}');
+      if (start !== -1 && end > start) {
+        parsed = JSON.parse(text.slice(start, end + 1));
+      } else {
+        throw new Error(`Could not parse Claude response: ${text}`);
+      }
+    }
+
+    res.json({ success: true, synthesis: parsed });
+
+  } catch (error) {
+    console.error('Synthesis error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Synthesis failed',
+    });
+  }
+});
+
 app.listen(PORT, () => {
-  console.log(`✓ Eye Health API running on port ${PORT}`);
-  console.log(`✓ POST eye images (base64) to /analyze-eye`);
+  console.log(`✓ Lumina API running on port ${PORT}`);
+  console.log(`✓ POST /analyze-eye for eye image analysis`);
+  console.log(`✓ POST /synthesize for combined eye + HR insight`);
 });
