@@ -1,13 +1,13 @@
 // server.js — Lumina backend
 // Receives eye images + vitals, sends to Claude API, returns analysis
- 
+
 import express from 'express';
 import cors from 'cors';
 import Anthropic from '@anthropic-ai/sdk';
- 
+
 const app = express();
 const PORT = process.env.PORT || 3000;
- 
+
 // Configure CORS explicitly — allow any origin, all methods, all headers
 app.use(cors({
   origin: '*',
@@ -15,34 +15,34 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: false,
 }));
- 
+
 // Handle preflight requests for all routes
 app.options('*', cors());
- 
+
 // Allow large image uploads (up to 10MB)
 app.use(express.json({ limit: '10mb' }));
- 
+
 // Initialize Claude client
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
- 
+
 // Health check endpoint
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'Lumina API is running' });
 });
- 
+
 // ========== ENDPOINT 1: Analyze eye image ==========
 app.post('/analyze-eye', async (req, res) => {
   try {
     const { image, mediaType } = req.body;
- 
+
     if (!image) {
       return res.status(400).json({ error: 'No image provided' });
     }
- 
+
     console.log(`Received image: ${mediaType}, ${Math.round(image.length / 1024)}KB base64`);
- 
+
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-5',
       max_tokens: 1024,
@@ -68,7 +68,7 @@ app.post('/analyze-eye', async (req, res) => {
 6. Fatigue (under-eye darkness, puffiness, tired appearance)
 7. Allergies (watery, itchy-looking, swollen lids)
 8. Arcus senilis (grayish-white ring around iris — cholesterol marker)
- 
+
 Respond with ONLY a valid JSON object in this exact format (no markdown, no extra text):
 {
   "is_eye_image": true,
@@ -83,21 +83,21 @@ Respond with ONLY a valid JSON object in this exact format (no markdown, no extr
   "arcus": {"risk": "low", "confidence": 85, "finding": "observation"},
   "overall": "summary in one sentence"
 }
- 
+
 Use "low", "medium", or "high" for risk. If not an eye image, set is_eye_image to false.`,
           },
         ],
       }],
     });
- 
+
     const text = response.content
       .filter(block => block.type === 'text')
       .map(block => block.text)
       .join('')
       .trim();
- 
+
     console.log(`Claude responded: ${text.slice(0, 100)}...`);
- 
+
     let parsed;
     try {
       parsed = JSON.parse(text);
@@ -110,9 +110,9 @@ Use "low", "medium", or "high" for risk. If not an eye image, set is_eye_image t
         throw new Error(`Could not parse Claude response: ${text}`);
       }
     }
- 
+
     res.json({ success: true, results: parsed });
- 
+
   } catch (error) {
     console.error('Analysis error:', error);
     res.status(500).json({
@@ -121,18 +121,109 @@ Use "low", "medium", or "high" for risk. If not an eye image, set is_eye_image t
     });
   }
 });
- 
-// ========== ENDPOINT 2: Synthesize all measurements ==========
+
+// ========== ENDPOINT 2: Cataract screening ==========
+app.post('/analyze-cataract', async (req, res) => {
+  try {
+    const { image, mediaType } = req.body;
+
+    if (!image) {
+      return res.status(400).json({ error: 'No image provided' });
+    }
+
+    console.log(`Cataract scan received: ${mediaType}, ${Math.round(image.length / 1024)}KB`);
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 512,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: mediaType || 'image/jpeg',
+              data: image,
+            },
+          },
+          {
+            type: 'text',
+            text: `You are a visual wellness screening assistant. Analyze this close-up photo of an eye for visible signs of cataract.
+
+Examine the pupil and lens area specifically. Look for:
+1. **Pupil clarity**: A healthy pupil appears uniformly dark/black. Cataracts cause cloudiness.
+2. **Lens opacity**: Look for grayish, whitish, or milky appearance in the pupil region.
+3. **Red reflex**: If the photo has flash, healthy lenses reflect a red-orange color. White or absent reflex can indicate cataract.
+4. **Image quality**: Note if photo is too far/blurry/poorly lit to assess properly.
+
+Severity scale:
+- "clear" = pupil appears uniformly dark, no visible cloudiness
+- "minimal" = very slight haziness, likely age-related, low concern
+- "possible" = noticeable cloudiness or whitish appearance, worth professional check
+- "likely" = clear visual signs of significant lens opacity
+
+Respond with ONLY a valid JSON object (no markdown):
+{
+  "is_eye_image": true,
+  "image_quality": "good",
+  "severity": "clear",
+  "confidence": 85,
+  "finding": "brief observation of what you see",
+  "recommendation": "one short suggestion or empty string"
+}
+
+Use "clear", "minimal", "possible", or "likely" for severity.
+If not a clear close-up eye image, set is_eye_image to false.
+If image quality is too poor to assess, set image_quality to "poor".`,
+          },
+        ],
+      }],
+    });
+
+    const text = response.content
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('')
+      .trim();
+
+    console.log(`Cataract response: ${text.slice(0, 100)}...`);
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      const start = text.indexOf('{');
+      const end = text.lastIndexOf('}');
+      if (start !== -1 && end > start) {
+        parsed = JSON.parse(text.slice(start, end + 1));
+      } else {
+        throw new Error(`Could not parse Claude response: ${text}`);
+      }
+    }
+
+    res.json({ success: true, results: parsed });
+
+  } catch (error) {
+    console.error('Cataract analysis error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Cataract analysis failed',
+    });
+  }
+});
+
+// ========== ENDPOINT 3: Synthesize all measurements ==========
 app.post('/synthesize', async (req, res) => {
   try {
-    const { eyeResults, heartRate, pupilResult, eyelidResult, colorResult } = req.body;
- 
+    const { eyeResults, cataractResult, heartRate, pupilResult, eyelidResult, colorResult } = req.body;
+
     if (!eyeResults) {
       return res.status(400).json({ error: 'Need eyeResults' });
     }
- 
-    console.log(`Synthesizing: HR=${heartRate}, pupil=${!!pupilResult}, eyelid=${!!eyelidResult}, color=${!!colorResult}`);
- 
+
+    console.log(`Synthesizing: cataract=${!!cataractResult}, HR=${heartRate}, pupil=${!!pupilResult}, eyelid=${!!eyelidResult}, color=${!!colorResult}`);
+
     // Build eye findings summary
     const indicators = ['anemia', 'jaundice', 'hypertension', 'infection',
                         'dryeye', 'fatigue', 'allergies', 'arcus'];
@@ -140,9 +231,12 @@ app.post('/synthesize', async (req, res) => {
       .filter(k => eyeResults[k])
       .map(k => `- ${k}: risk=${eyeResults[k].risk}, confidence=${eyeResults[k].confidence}%, finding="${eyeResults[k].finding}"`)
       .join('\n');
- 
+
     // Build vitals summary (only what was measured)
     let vitalsSummary = '';
+    if (cataractResult) {
+      vitalsSummary += `\n- Cataract screening: ${cataractResult.severity} (confidence ${cataractResult.confidence}%) — ${cataractResult.finding}`;
+    }
     if (typeof heartRate === 'number') {
       let hrZone = 'normal range (60-100 BPM)';
       if (heartRate < 60) hrZone = 'low (bradycardia)';
@@ -158,11 +252,11 @@ app.post('/synthesize', async (req, res) => {
     if (colorResult) {
       vitalsSummary += `\n- Color vision test: ${colorResult.correct}/${colorResult.total} (${colorResult.zone})`;
     }
- 
+
     if (!vitalsSummary) {
       vitalsSummary = '\n(No vitals were measured this session)';
     }
- 
+
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-5',
       max_tokens: 512,
@@ -171,40 +265,40 @@ app.post('/synthesize', async (req, res) => {
         content: [{
           type: 'text',
           text: `You are a wellness screening assistant. A user just completed a Lumina screening:
- 
+
 EYE SCAN FINDINGS:
 ${eyeFindings}
- 
+
 Eye summary: "${eyeResults.overall}"
- 
+
 MEASURED VITALS:${vitalsSummary}
- 
+
 TASK: Write a single combined wellness insight (2-3 sentences) that:
 1. Synthesizes the visual eye findings AND any measured vitals together
 2. Notes patterns where vitals reinforce or contradict eye signals (e.g., visible anemia signs + low pallor index = stronger signal)
 3. Suggests ONE most useful next step if appropriate
 4. Stays warm, calm, non-alarming. Wellness-framed, not diagnostic.
- 
+
 Respond with ONLY a valid JSON object (no markdown):
 {
   "synthesis": "your 2-3 sentence combined insight",
   "next_step": "one short suggested next step, or empty string if everything looks fine",
   "overall_risk": "low"
 }
- 
+
 Use "low", "medium", or "high" for overall_risk.`,
         }],
       }],
     });
- 
+
     const text = response.content
       .filter(block => block.type === 'text')
       .map(block => block.text)
       .join('')
       .trim();
- 
+
     console.log(`Synthesis: ${text.slice(0, 100)}...`);
- 
+
     let parsed;
     try {
       parsed = JSON.parse(text);
@@ -217,9 +311,9 @@ Use "low", "medium", or "high" for overall_risk.`,
         throw new Error(`Could not parse Claude response: ${text}`);
       }
     }
- 
+
     res.json({ success: true, synthesis: parsed });
- 
+
   } catch (error) {
     console.error('Synthesis error:', error);
     res.status(500).json({
@@ -228,7 +322,7 @@ Use "low", "medium", or "high" for overall_risk.`,
     });
   }
 });
- 
+
 app.listen(PORT, () => {
   console.log(`✓ Lumina API running on port ${PORT}`);
   console.log(`✓ POST /analyze-eye for eye image analysis`);
